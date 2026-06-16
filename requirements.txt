@@ -1,0 +1,35 @@
+# Graph database
+neo4j==5.28.1
+
+# Local AI / embeddings
+ollama==0.4.8
+
+# Task queue
+celery==5.5.2
+redis==5.2.1
+
+# Ingestion
+feedparser==6.0.11
+httpx==0.28.1
+beautifulsoup4==4.13.4
+trafilatura==2.0.0
+pdfplumber==0.11.6
+praw==7.8.1
+PyGithub==2.6.1
+requests==2.32.3
+
+# Dashboard & visualization
+streamlit==1.45.1
+plotly==6.1.1
+
+# Graph algorithms (structural analysis engine — Phase 4)
+networkx>=3.3
+
+# ORM / Orphan Queue persistence (Phase 3)
+sqlalchemy>=2.0
+
+# Utilities
+python-dotenv==1.1.0
+loguru==0.7.3
+tenacity==9.1.4
+pyyaml>=6.0
