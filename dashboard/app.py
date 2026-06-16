@@ -844,6 +844,26 @@ elif page == "System Status":
 
     st.metric("Hypotheses Awaiting Human Approval", stats["pending_ach"])
 
+    st.subheader("Telegram Alerts")
+    try:
+        from alerts.telegram import is_configured
+        tg_ok = is_configured()
+    except Exception:
+        tg_ok = False
+    if tg_ok:
+        st.success("Telegram configured — alerts active")
+        st.markdown(
+            "- IAS window closing — when Tier 1-2 hypothesis appears in mainstream media\n"
+            "- New Tier-1 signal — when OPS crosses 0.60 for the first time\n"
+            "- ACH review needed — when confidence crosses 0.80\n"
+            "- Daily digest — 08:00 UTC"
+        )
+    else:
+        st.warning(
+            "Telegram not configured — add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to `.env`. "
+            "See `.env.example` for setup instructions."
+        )
+
     st.subheader("Schedule (Celery Beat)")
     schedule = {
         "GitHub + HN": "Every 4h",
@@ -859,6 +879,9 @@ elif page == "System Status":
         "Hypothesis Generator": "Weekly Mon 02:30",
         "ACH Review": "Weekly Mon 04:00",
         "IAS Window Check": "Every 6h",
+        "Telegram Daily Digest": "Daily 08:00 UTC",
+        "Telegram New Tier-1 Check": "Every 6h",
+        "Telegram ACH Needed Check": "Every 4h",
     }
     for task, freq in schedule.items():
         st.markdown(f"- **{task}**: {freq}")

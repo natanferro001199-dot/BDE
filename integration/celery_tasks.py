@@ -21,8 +21,6 @@ the two tasks would fetch the same RSS feeds from different angles.
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
 
 from celery import shared_task
 from loguru import logger
@@ -96,25 +94,36 @@ def ingest_tier34_articles():
 
 def _load_tier1_hypotheses():
     """
-    Load active Tier 1-2 hypotheses from Neo4j.
-    STUB — returns [] until Phase 5 (Hypothesis Engine) is complete.
-
-    Replace with:
-        from neo4j import GraphDatabase
-        from config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
-        from integration.ias_monitor import WatchedHypothesis
-        driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-        with driver.session() as s:
-            rows = s.run(
-                "MATCH (h:Hypothesis) "
-                "WHERE h.ops_score >= 7.0 AND h.status = 'ACTIVE' "
-                "AND h.awareness_layer < 4 "
-                "RETURN h.id, h.statement, h.keywords, "
-                "       h.confidence, h.ops_score, h.awareness_layer"
-            )
-            return [WatchedHypothesis(**dict(r)) for r in rows]
+    Load active Tier 1-2 hypotheses from HypothesisManager (SQLite).
+    Returns WatchedHypothesis objects ready for IAS monitoring.
     """
-    return []
+    import re
+    from hypotheses.hypothesis_manager import HypothesisManager
+    from scoring.opportunity_scorer import score_hypothesis
+    from integration.ias_monitor import WatchedHypothesis
+
+    mgr    = HypothesisManager()
+    active = mgr.active(min_confidence=0.40)
+    tier12 = [h for h in active if int(h.get("awareness_layer") or 1) <= 2]
+
+    watched = []
+    for h in tier12:
+        scored   = score_hypothesis(h)
+        # Keywords: node name + capitalized proper nouns from statement
+        node_name = h.get("node_name") or ""
+        stmt      = h.get("statement") or ""
+        cap_words = re.findall(r"\b[A-Z][a-z]{2,}\b", stmt)
+        keywords  = list(dict.fromkeys([node_name] + cap_words))[:8]
+        watched.append(WatchedHypothesis(
+            id=h["id"],
+            statement=stmt,
+            keywords=keywords,
+            confidence=float(h.get("confidence") or 0),
+            ops_score=scored["ops_final"],
+            awareness_layer=int(h.get("awareness_layer") or 1),
+        ))
+
+    return watched
 
 
 def _route_to_entity_resolution(article: dict) -> None:
@@ -132,23 +141,9 @@ def _route_to_entity_resolution(article: dict) -> None:
 
 
 def _get_telegram_sender():
-    """
-    Return the Telegram send function from news-sentiment's notifier.
-    Returns None if tokens are not configured (alerts are logged only).
-    """
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-    if not bot_token or not chat_id:
+    """Return BDE's own Telegram send function, or None if not configured."""
+    from alerts.telegram import is_configured, send
+    if not is_configured():
         logger.debug("TELEGRAM_BOT_TOKEN/CHAT_ID not set — IAS alerts will be logged only")
         return None
-    try:
-        ns_src = str(
-            Path(__file__).resolve().parents[2] / "news-sentiment" / "src"
-        )
-        if ns_src not in sys.path:
-            sys.path.insert(0, ns_src)
-        from news_sentiment.notify.telegram import TelegramNotifier
-        return TelegramNotifier(bot_token, chat_id).send
-    except Exception as e:
-        logger.warning(f"Could not load Telegram notifier: {e} — alerts logged only")
-        return None
+    return send

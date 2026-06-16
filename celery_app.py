@@ -14,7 +14,7 @@ app.conf.update(
     task_reject_on_worker_lost=True,
 )
 
-app.autodiscover_tasks(["ingestion", "processing", "resolution", "analysis", "hypotheses", "contrarian", "integration"])
+app.autodiscover_tasks(["ingestion", "processing", "resolution", "analysis", "hypotheses", "contrarian", "integration", "alerts"])
 
 app.conf.beat_schedule = {
     # Phase 2 — Ingestion (Tier 1-2 sources only; Tier 3-4 handled by news-sentiment)
@@ -90,5 +90,18 @@ app.conf.beat_schedule = {
     "ingest-tier34-every-6h": {
         "task": "integration.celery_tasks.ingest_tier34_articles",
         "schedule": crontab(minute=30, hour="*/6"),
+    },
+    # Alerts — Telegram notifications
+    "alerts-daily-digest-08h": {
+        "task": "alerts.celery_tasks.send_daily_digest",
+        "schedule": crontab(minute=0, hour=8),
+    },
+    "alerts-check-new-tier1-6h": {
+        "task": "alerts.celery_tasks.check_new_tier1",
+        "schedule": crontab(minute=15, hour="*/6"),
+    },
+    "alerts-check-ach-needed-4h": {
+        "task": "alerts.celery_tasks.check_ach_needed",
+        "schedule": crontab(minute=45, hour="*/4"),
     },
 }
