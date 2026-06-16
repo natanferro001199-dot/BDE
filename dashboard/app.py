@@ -37,10 +37,23 @@ st.set_page_config(
 # Navigation
 # ──────────────────────────────────────────────
 
-PAGES = ["Overview", "Hypothesis Detail", "Knowledge Graph", "Orphan Queue", "System Status"]
+PAGES = [
+    "Overview", "Hypothesis Detail", "Knowledge Graph",
+    "Orphan Queue", "System Status", "Geo Risk Map", "Scenario Simulator",
+]
 page = st.sidebar.selectbox("Navigate", PAGES)
 st.sidebar.markdown("---")
-st.sidebar.caption("BDE v0.8 · Phase 7")
+st.sidebar.caption("BDE v0.9 · Phase 7")
+
+COUNTRY_ISO3: dict[str, str] = {
+    "Taiwan": "TWN", "Japan": "JPN", "United States": "USA",
+    "South Korea": "KOR", "Netherlands": "NLD", "China": "CHN",
+    "Germany": "DEU", "Switzerland": "CHE", "Ireland": "IRL",
+    "Singapore": "SGP", "Malaysia": "MYS", "Israel": "ISR",
+    "Australia": "AUS", "India": "IND", "Vietnam": "VNM",
+    "Thailand": "THA", "Philippines": "PHL", "United Kingdom": "GBR",
+    "France": "FRA", "Belgium": "BEL", "Finland": "FIN",
+}
 
 # ──────────────────────────────────────────────
 # Cached data loaders
@@ -143,6 +156,48 @@ def get_evidence_rows():
             })
     rows.sort(key=lambda r: r["Severity"], reverse=True)
     return rows
+
+
+@st.cache_data(ttl=300)
+def get_geo_risk():
+    """Aggregate SRS by country from Geography nodes + Company LOCATED_IN edges."""
+    try:
+        from neo4j import GraphDatabase
+        from config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
+        from hypotheses.hypothesis_manager import HypothesisManager
+
+        driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+        with driver.session() as s:
+            geo = s.run("""
+                MATCH (g:Geography)
+                RETURN g.id AS node_id, g.name AS name,
+                       coalesce(g.srs_score, 0.0) AS srs_score,
+                       coalesce(g.is_articulation_point, false) AS is_ap,
+                       coalesce(g.betweenness, 0.0) AS betweenness,
+                       coalesce(g.concentration, 0.0) AS concentration
+                ORDER BY g.srs_score DESC
+            """).data()
+            companies = s.run("""
+                MATCH (c:Company)-[:LOCATED_IN]->(g:Geography)
+                RETURN g.name AS country, g.id AS geo_id,
+                       c.name AS company_name, c.id AS company_id,
+                       coalesce(c.srs_score, 0.0) AS company_srs
+                ORDER BY c.srs_score DESC
+            """).data()
+        driver.close()
+
+        mgr = HypothesisManager()
+        all_hyps = mgr.list_all(200)
+        geo_ids = {g["node_id"] for g in geo}
+        geo_hyps: dict[str, list] = defaultdict(list)
+        for h in all_hyps:
+            if h.get("node_id") in geo_ids:
+                geo_hyps[h["node_id"]].append(h)
+
+        return {"geo": geo, "companies": companies,
+                "hypotheses": dict(geo_hyps), "error": None}
+    except Exception as e:
+        return {"geo": [], "companies": [], "hypotheses": {}, "error": str(e)}
 
 
 @st.cache_data(ttl=300)
@@ -807,3 +862,300 @@ elif page == "System Status":
     }
     for task, freq in schedule.items():
         st.markdown(f"- **{task}**: {freq}")
+
+
+# ──────────────────────────────────────────────
+# PAGE 6: Geo Risk Map
+# ──────────────────────────────────────────────
+
+elif page == "Geo Risk Map":
+    st.title("Geographic Supply Chain Risk")
+    st.markdown(
+        "Countries colored by aggregate SRS score from taxonomy nodes. "
+        "Click a country on the map or use the selector to drill down."
+    )
+
+    with st.spinner("Loading geographic risk data…"):
+        geo_data = get_geo_risk()
+
+    if geo_data.get("error"):
+        st.warning(f"Neo4j unavailable — start Neo4j Desktop to load this page. ({geo_data['error'][:100]})")
+    elif not geo_data["geo"]:
+        st.info("No Geography nodes with SRS scores found. Run structural analysis first.")
+    else:
+        # ── Build country aggregation ────────────────────────────────────
+        ISO3_TO_NAME = {v: k for k, v in COUNTRY_ISO3.items()}
+        country_data: dict[str, dict] = {}
+
+        for g in geo_data["geo"]:
+            iso3 = COUNTRY_ISO3.get(g["name"])
+            if not iso3:
+                continue
+            country_data[g["name"]] = {
+                "iso3":     iso3,
+                "node_id":  g["node_id"],
+                "srs":      float(g.get("srs_score") or 0),
+                "is_ap":    bool(g.get("is_ap", False)),
+                "betweenness": float(g.get("betweenness") or 0),
+                "concentration": float(g.get("concentration") or 0),
+                "companies": [],
+            }
+
+        # Attach companies; boost country SRS if a company is riskier
+        for c in geo_data["companies"]:
+            cname = c["country"]
+            if cname in country_data:
+                country_data[cname]["companies"].append(c)
+                company_srs = float(c.get("company_srs") or 0)
+                if company_srs > country_data[cname]["srs"]:
+                    country_data[cname]["srs"] = company_srs
+
+        locs  = [d["iso3"] for d in country_data.values()]
+        z     = [d["srs"]  for d in country_data.values()]
+        names = list(country_data.keys())
+
+        hover_text = []
+        for name, d in country_data.items():
+            companies = [c["company_name"] for c in d["companies"][:3]]
+            comp_str = ", ".join(companies) if companies else "—"
+            ap_str = " · Articulation Point" if d["is_ap"] else ""
+            hover_text.append(
+                f"<b>{name}</b>{ap_str}<br>SRS: {d['srs']:.3f}<br>"
+                f"Key suppliers: {comp_str}"
+            )
+
+        # ── Choropleth ───────────────────────────────────────────────────
+        fig = go.Figure(go.Choropleth(
+            locations=locs,
+            z=z,
+            locationmode="ISO-3",
+            colorscale=[[0, "#27ae60"], [0.45, "#f39c12"], [1.0, "#c0392b"]],
+            zmin=0, zmax=1,
+            colorbar=dict(title="SRS", thickness=14, len=0.85,
+                          tickfont=dict(color="#fff"), title_font=dict(color="#fff")),
+            hovertemplate="%{text}<extra></extra>",
+            text=hover_text,
+            marker_line_color="#333",
+            marker_line_width=0.5,
+            selectedpoints=[],
+        ))
+        fig.update_layout(
+            geo=dict(
+                showframe=False, showcoastlines=True,
+                coastlinecolor="#555", bgcolor="#0e1117",
+                landcolor="#1a1d24", oceancolor="#0e1117",
+                showocean=True, lakecolor="#0e1117",
+                showlakes=True,
+            ),
+            paper_bgcolor="#0e1117",
+            margin=dict(l=0, r=0, t=0, b=0),
+            height=460,
+            font=dict(color="#ffffff"),
+        )
+
+        # Render map — capture click events
+        event = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+
+        # Determine selected country from click or manual selectbox
+        clicked_iso3: str | None = None
+        if event and hasattr(event, "selection") and event.selection:
+            pts = getattr(event.selection, "points", [])
+            if pts:
+                clicked_iso3 = pts[0].get("location")
+
+        available = sorted(country_data.keys(), key=lambda n: -country_data[n]["srs"])
+        sel_country = st.selectbox(
+            "Select country (or click map above)",
+            ["— select —"] + available,
+            index=0,
+            key="geo_select",
+        )
+        if sel_country != "— select —":
+            clicked_iso3 = COUNTRY_ISO3.get(sel_country)
+
+        # ── Drill-down panel ─────────────────────────────────────────────
+        if clicked_iso3:
+            sel_name = ISO3_TO_NAME.get(clicked_iso3) or clicked_iso3
+            cd = country_data.get(sel_name)
+            if cd:
+                st.markdown("---")
+                st.subheader(f"Drill-down: {sel_name}")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("SRS Score", f"{cd['srs']:.3f}")
+                m2.metric("Articulation Point", "Yes" if cd["is_ap"] else "No")
+                m3.metric("Companies in KG", len(cd["companies"]))
+
+                # Companies table
+                if cd["companies"]:
+                    st.markdown("**Companies located in this region:**")
+                    st.dataframe(
+                        [{"Company": c["company_name"],
+                          "Company ID": c["company_id"],
+                          "SRS": f"{float(c.get('company_srs') or 0):.3f}"}
+                         for c in sorted(cd["companies"], key=lambda x: -float(x.get("company_srs") or 0))],
+                        use_container_width=True, hide_index=True,
+                    )
+
+                # Hypotheses linked to this geography node
+                hyps_for_node = geo_data["hypotheses"].get(cd["node_id"], [])
+                if hyps_for_node:
+                    st.markdown("**Active hypotheses for this region:**")
+                    for h in hyps_for_node:
+                        conf = float(h.get("confidence") or 0)
+                        badge = "🔴" if conf >= 0.7 else ("🟠" if conf >= 0.5 else "🟡")
+                        with st.expander(f"{badge} {(h.get('statement') or '')[:80]}"):
+                            st.markdown(f"**Confidence:** {conf:.0%}")
+                            st.markdown(f"**Falsification criteria:**")
+                            fc = json.loads(h.get("falsification_criteria") or "[]")
+                            for i, c in enumerate(fc, 1):
+                                st.markdown(f"{i}. {c}")
+                else:
+                    st.info("No active hypotheses linked to this geography node.")
+
+                # Recent evidence from Neo4j
+                try:
+                    from hypotheses.evidence_updater import recent_evidence_for_node
+                    docs = recent_evidence_for_node(cd["node_id"], limit=5)
+                    if docs:
+                        st.markdown("**Recent evidence documents:**")
+                        for d in docs:
+                            src = d.get("d.source", "")
+                            title = d.get("d.title", "")
+                            pub = (d.get("d.published_at") or "")[:10]
+                            st.markdown(f"- [{src}] {title} *({pub})*")
+                except Exception:
+                    pass
+
+
+# ──────────────────────────────────────────────
+# PAGE 7: Scenario Simulator (What-If)
+# ──────────────────────────────────────────────
+
+elif page == "Scenario Simulator":
+    st.title("Scenario Simulator")
+    st.markdown(
+        "Select a node and simulate its removal from the supply chain. "
+        "The system re-runs the full structural analysis and shows before/after SRS scores "
+        "for every affected node — without writing anything to Neo4j."
+    )
+
+    with st.spinner("Loading node list…"):
+        all_nodes = get_top_nodes()
+
+    if not all_nodes:
+        st.info("Run structural analysis first to populate SRS scores.")
+    else:
+        node_options = {f"{n.get('name')} ({n.get('label')}, SRS {float(n.get('srs_score') or 0):.3f})": n["node_id"]
+                       for n in all_nodes}
+        sel_label = st.selectbox("Node to remove from the supply chain:", list(node_options.keys()))
+        sel_node_id = node_options[sel_label]
+        sel_node_name = sel_label.split(" (")[0]
+
+        st.markdown(
+            f"> **Simulation:** What happens if **{sel_node_name}** is removed from the supply chain graph? "
+            f"All path-based metrics (betweenness, articulation points) are recomputed on the remaining graph."
+        )
+
+        run_sim = st.button("Run Simulation", type="primary")
+
+        if run_sim:
+            with st.spinner(f"Re-running structural analysis without {sel_node_name}… (10-30 seconds)"):
+                from analysis.structural_analyzer import run_whatif
+                result = run_whatif(sel_node_id)
+
+            if "error" in result:
+                st.error(f"Simulation failed: {result['error']}")
+            else:
+                st.success(f"Simulation complete — {result['nodes_remaining']} nodes analyzed.")
+                st.markdown("---")
+
+                # ── Summary KPIs ─────────────────────────────────────────
+                total_delta = result["total_srs_delta"]
+                ap_change   = result["new_ap_count"] - result["old_ap_count"]
+
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Nodes Remaining", result["nodes_remaining"],
+                          delta=f"-1 ({sel_node_name} removed)", delta_color="off")
+                k2.metric("Total SRS Change", f"{total_delta:+.3f}",
+                          delta_color="inverse")
+                k3.metric("Articulation Points Before", result["old_ap_count"])
+                k4.metric("Articulation Points After", result["new_ap_count"],
+                          delta=f"{ap_change:+d}", delta_color="inverse")
+
+                st.markdown("---")
+
+                comparison = result["comparison"]
+                if not comparison:
+                    st.info("No score changes detected — this node had minimal structural impact.")
+                else:
+                    # ── Diverging delta chart ────────────────────────────
+                    st.subheader(f"SRS Score Changes After Removing {sel_node_name}")
+                    st.caption("Red = risk increased (node was suppressing it) · Green = risk decreased (node was amplifying it)")
+
+                    top_changed = [r for r in comparison if abs(r["delta"]) > 0.001][:20]
+                    if top_changed:
+                        bar_names   = [r["name"] for r in reversed(top_changed)]
+                        bar_deltas  = [r["delta"] for r in reversed(top_changed)]
+                        bar_colors  = ["#e74c3c" if d > 0 else "#27ae60" for d in bar_deltas]
+                        bar_ap_new  = [r.get("now_ap", False) for r in reversed(top_changed)]
+                        bar_labels  = [("★ " if ap else "") + name for name, ap in zip(bar_names, bar_ap_new)]
+
+                        fig_delta = go.Figure(go.Bar(
+                            x=bar_deltas,
+                            y=bar_labels,
+                            orientation="h",
+                            marker_color=bar_colors,
+                            hovertemplate="<b>%{y}</b><br>ΔSRS: %{x:+.4f}<extra></extra>",
+                        ))
+                        fig_delta.add_vline(x=0, line_color="#888", line_width=1)
+                        fig_delta.update_layout(
+                            height=max(300, len(top_changed) * 28),
+                            margin=dict(l=10, r=20, t=10, b=10),
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            xaxis=dict(title="ΔSRS", gridcolor="#2a2a2a", color="#aaa",
+                                       zeroline=True, zerolinecolor="#666"),
+                            yaxis=dict(tickfont=dict(size=10, color="#ddd")),
+                            font=dict(color="#ffffff"),
+                        )
+                        st.plotly_chart(fig_delta, use_container_width=True)
+
+                    # ── Before / After top-5 comparison ─────────────────
+                    st.subheader("Top-5 Bottlenecks: Before vs After")
+                    before_sorted = sorted(comparison, key=lambda r: -r["srs_before"])[:5]
+                    after_sorted  = sorted(comparison, key=lambda r: -r["srs_after"])[:5]
+
+                    col_b, col_a = st.columns(2)
+                    with col_b:
+                        st.markdown("**Before removal**")
+                        st.dataframe(
+                            [{"#": i + 1, "Node": r["name"], "SRS": f"{r['srs_before']:.4f}",
+                              "AP": "★" if r.get("was_ap") else ""}
+                             for i, r in enumerate(before_sorted)],
+                            use_container_width=True, hide_index=True,
+                        )
+                    with col_a:
+                        st.markdown(f"**After removing {sel_node_name}**")
+                        st.dataframe(
+                            [{"#": i + 1, "Node": r["name"], "SRS": f"{r['srs_after']:.4f}",
+                              "AP": "★" if r.get("now_ap") else "",
+                              "ΔSRS": f"{r['delta']:+.4f}"}
+                             for i, r in enumerate(after_sorted)],
+                            use_container_width=True, hide_index=True,
+                        )
+
+                    # ── Full comparison table ────────────────────────────
+                    st.markdown("---")
+                    with st.expander(f"Full comparison table ({len(comparison)} nodes)"):
+                        st.dataframe(
+                            [{
+                                "Node":       r["name"],
+                                "Label":      r["label"],
+                                "SRS Before": r["srs_before"],
+                                "SRS After":  r["srs_after"],
+                                "ΔSRS":       r["delta"],
+                                "Was AP":     "★" if r.get("was_ap") else "",
+                                "Now AP":     "★" if r.get("now_ap") else "",
+                            } for r in comparison],
+                            use_container_width=True, hide_index=True,
+                        )

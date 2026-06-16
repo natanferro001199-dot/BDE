@@ -281,6 +281,84 @@ def top_bottlenecks(n: int = 20) -> list[dict]:
     return results[:n]
 
 
+def run_whatif(excluded_node_id: str) -> dict:
+    """
+    Simulate removing one node from the supply chain and re-compute SRS for all
+    remaining nodes. Reads from Neo4j but does NOT write results back.
+    """
+    import sys
+    sys.setrecursionlimit(max(sys.getrecursionlimit(), 2000))
+
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    try:
+        # Snapshot current stored SRS scores before simulation
+        original: dict[str, dict] = {}
+        with driver.session() as s:
+            for label in LABELS:
+                rows = s.run(
+                    f"""MATCH (n:{label})
+                        WHERE n.srs_score IS NOT NULL
+                        RETURN n.id AS node_id, n.name AS name, '{label}' AS label,
+                               n.srs_score AS srs_score,
+                               coalesce(n.is_articulation_point, false) AS was_ap""",
+                ).data()
+                for r in rows:
+                    original[r["node_id"]] = dict(r)
+
+        nodes_all, edges_all = _load_graph(driver)
+        ex = excluded_node_id
+        nodes  = [n for n in nodes_all if n["id"] != ex]
+        edges  = [(s, t) for s, t in edges_all if s != ex and t != ex]
+        excl_name = next((n.get("name", ex) for n in nodes_all if n["id"] == ex), ex)
+
+        if not nodes:
+            return {"error": "No nodes remaining after exclusion", "excluded_name": excl_name}
+
+        adj, suppliers = _build_adjacency(nodes, edges)
+        node_ids  = [n["id"] for n in nodes]
+        centrality = _betweenness_centrality(nodes, adj)
+        aps        = _articulation_points(node_ids, adj)
+        new_scored = _compute_srs(nodes, centrality, suppliers, aps)
+        new_by_id  = {r["node_id"]: r for r in new_scored}
+
+        comparison = []
+        for nid, orig in original.items():
+            if nid == ex:
+                continue
+            new = new_by_id.get(nid)
+            if new:
+                old_srs = float(orig.get("srs_score") or 0)
+                new_srs = float(new["srs_score"])
+                comparison.append({
+                    "node_id":   nid,
+                    "name":      orig.get("name", ""),
+                    "label":     orig.get("label", ""),
+                    "srs_before": round(old_srs, 4),
+                    "srs_after":  round(new_srs, 4),
+                    "delta":      round(new_srs - old_srs, 4),
+                    "was_ap":     bool(orig.get("was_ap", False)),
+                    "now_ap":     nid in aps,
+                })
+
+        comparison.sort(key=lambda x: abs(x["delta"]), reverse=True)
+
+        before_total = sum(float(o.get("srs_score") or 0) for nid, o in original.items() if nid != ex)
+        after_total  = sum(r["srs_score"] for r in new_scored)
+        old_ap_count = sum(1 for nid, o in original.items() if nid != ex and o.get("was_ap"))
+
+        return {
+            "excluded_id":     ex,
+            "excluded_name":   excl_name,
+            "nodes_remaining": len(nodes),
+            "new_ap_count":    len(aps),
+            "old_ap_count":    old_ap_count,
+            "total_srs_delta": round(after_total - before_total, 4),
+            "comparison":      comparison[:30],
+        }
+    finally:
+        driver.close()
+
+
 if __name__ == "__main__":
     import json
     result = run()
