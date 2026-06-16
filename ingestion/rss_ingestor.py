@@ -17,15 +17,25 @@ from loguru import logger
 from ingestion.base import Document, IngestStore
 
 FEEDS = [
-    {"name": "semianalysis",    "url": "https://www.semianalysis.com/feed",                 "tier": 1},
-    {"name": "ieee_spectrum",   "url": "https://spectrum.ieee.org/feeds/feed.rss",          "tier": 1},
-    {"name": "eetimes",         "url": "https://www.eetimes.com/feed/",                     "tier": 1},
-    {"name": "tomshardware",    "url": "https://www.tomshardware.com/feeds/all",            "tier": 2},
-    {"name": "anandtech",       "url": "https://www.anandtech.com/rss/rssfeeds.aspx",      "tier": 2},
-    {"name": "thechipletter",   "url": "https://www.thechipletter.com/feed",               "tier": 1},
-    {"name": "semiconductor_eng","url": "https://semiengineering.com/feed/",               "tier": 1},
-    {"name": "wikichip_news",   "url": "https://fuse.wikichip.org/feed/",                  "tier": 1},
-    {"name": "edn_network",     "url": "https://www.edn.com/feed/",                        "tier": 2},
+    # Tier 1-2 — specialist technical press
+    {"name": "semianalysis",     "url": "https://www.semianalysis.com/feed",                              "tier": 1},
+    {"name": "ieee_spectrum",    "url": "https://spectrum.ieee.org/feeds/feed.rss",                       "tier": 1},
+    {"name": "eetimes",          "url": "https://www.eetimes.com/feed/",                                  "tier": 1},
+    {"name": "tomshardware",     "url": "https://www.tomshardware.com/feeds/all",                         "tier": 2},
+    {"name": "anandtech",        "url": "https://www.anandtech.com/rss/rssfeeds.aspx",                   "tier": 2},
+    {"name": "thechipletter",    "url": "https://www.thechipletter.com/feed",                             "tier": 1},
+    {"name": "semiconductor_eng","url": "https://semiengineering.com/feed/",                              "tier": 1},
+    {"name": "wikichip_news",    "url": "https://fuse.wikichip.org/feed/",                                "tier": 1},
+    {"name": "edn_network",      "url": "https://www.edn.com/feed/",                                     "tier": 2},
+    # Tier 3 — US mainstream financial / technology press
+    {"name": "nyt_technology",   "url": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",   "tier": 3},
+    {"name": "nyt_business",     "url": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",     "tier": 3},
+    {"name": "nyt_economy",      "url": "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",      "tier": 3},
+    {"name": "reuters_tech",     "url": "https://feeds.reuters.com/reuters/technologyNews",               "tier": 3},
+    {"name": "reuters_business", "url": "https://feeds.reuters.com/reuters/businessNews",                 "tier": 3},
+    {"name": "ap_technology",    "url": "https://apnews.com/apf-technology",                              "tier": 3},
+    {"name": "washpost_tech",    "url": "https://feeds.washingtonpost.com/rss/business/technology",       "tier": 3},
+    {"name": "wsj_markets",      "url": "https://feeds.a.dowjones.com/rss/RSSMarketsMain.xml",            "tier": 3},
 ]
 
 KEYWORDS = [

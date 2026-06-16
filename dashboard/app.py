@@ -78,6 +78,83 @@ def tier_badge(tier: int) -> str:
     return f"{colors.get(tier, '⚪')} T{tier}"
 
 
+def _explain_node(n: dict) -> str:
+    name = n.get("name", "Unknown")
+    label = n.get("label", "")
+    srs = float(n.get("srs_score") or 0)
+    betweenness = float(n.get("betweenness") or 0)
+    concentration = float(n.get("concentration") or 0)
+    is_ap = n.get("is_articulation_point", False)
+
+    parts = []
+
+    if is_ap:
+        parts.append(
+            f"**{name}** is an articulation point — removing it from the supply chain "
+            f"graph would disconnect other nodes, making it structurally irreplaceable in the short term."
+        )
+
+    if betweenness > 0.5:
+        parts.append(
+            f"It sits on a disproportionate share of the shortest paths between all supply "
+            f"chain nodes (betweenness={betweenness:.3f}), meaning most routes depend on it as an intermediary."
+        )
+    elif betweenness > 0.15:
+        parts.append(
+            f"It acts as a significant intermediary in the supply chain (betweenness={betweenness:.3f})."
+        )
+
+    if concentration > 0.80:
+        parts.append(
+            f"Supplier concentration is critically high ({concentration:.2f}/1.0) — there are very few "
+            f"qualified alternatives, and requalification typically takes 2–5 years."
+        )
+    elif concentration > 0.50:
+        parts.append(
+            f"Supplier concentration is elevated ({concentration:.2f}/1.0), indicating limited alternative sourcing options."
+        )
+
+    label_context = {
+        "Geography": (
+            "Geographic concentration adds geopolitical and natural disaster risk that cannot be "
+            "diversified through supplier selection alone — all suppliers in the same country share the same tail risk."
+        ),
+        "Company": (
+            "Single-company dependency means any disruption to this firm's operations (capacity constraints, "
+            "export restrictions, accidents) propagates immediately across its entire customer base."
+        ),
+        "Material": (
+            "Material constraints are particularly sticky — new sources require geological prospecting, "
+            "extraction infrastructure build-out, and process qualification, each taking years."
+        ),
+        "Process": (
+            "Process know-how is tacit and hard to transfer — loss of this capability typically "
+            "requires multi-year reconstruction and significant capital investment."
+        ),
+        "Equipment": (
+            "Capital equipment has 1–3 year lead times and highly proprietary specifications, "
+            "making rapid substitution nearly impossible even with unlimited capital."
+        ),
+        "Technology": (
+            "Proprietary technology creates deep lock-in; competitors require years of R&D to "
+            "replicate equivalent capability, and often cannot achieve parity without the tacit knowledge."
+        ),
+        "Regulation": (
+            "Regulatory chokepoints can shift rapidly with policy changes, creating both downside risk "
+            "and asymmetric information advantage for those closest to the regulatory process."
+        ),
+    }
+    if label in label_context:
+        parts.append(label_context[label])
+
+    if not parts:
+        parts.append(
+            f"{name} has a high structural risk score (SRS={srs:.3f}) based on its position in the dependency graph."
+        )
+
+    return "\n\n".join(parts)
+
+
 # ──────────────────────────────────────────────
 # PAGE 1: Overview
 # ──────────────────────────────────────────────
@@ -113,6 +190,25 @@ if page == "Overview":
                 "Evid +/-": f"{o['evidence_for_count']}/{o['evidence_against_count']}",
             })
         st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    if opps:
+        st.markdown("---")
+        st.subheader("Bottleneck Briefing")
+        st.caption("Plain-English explanation of each identified opportunity")
+        nodes = get_top_nodes()
+        node_map = {n["node_id"]: n for n in nodes}
+        for o in opps:
+            node = node_map.get(o.get("node_id"), {})
+            label = f"{tier_badge(o['tier'])} **{o.get('node_name')}** — OPS {o['ops_final']:.3f}"
+            with st.expander(label):
+                st.markdown(f"**Hypothesis:** {o.get('statement', '—')}")
+                st.markdown("---")
+                if node:
+                    st.markdown(_explain_node(node))
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Confidence", f"{o['confidence']:.0%}")
+                col2.metric("Evidence For / Against", f"{o['evidence_for_count']} / {o['evidence_against_count']}")
+                col3.metric("ACH Reviewed", "Yes" if o["ach_reviewed"] else "No")
 
     st.markdown("---")
     st.markdown("**OPS = (DR × IAS × 0.40) + (S × 0.20) + (CM × 0.15) + (VA × 0.15) + (RT × 0.10) × ACH_robustness**")
@@ -220,6 +316,16 @@ elif page == "Knowledge Graph":
                 "AP": "★" if n.get("is_articulation_point") else "",
             })
         st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    if nodes:
+        st.markdown("---")
+        st.subheader("Bottleneck Explanations")
+        st.caption("Why each node is a structural risk — based on graph topology and supply concentration")
+        for i, n in enumerate(nodes[:10], 1):
+            srs = float(n.get("srs_score") or 0)
+            ap_tag = " ★AP" if n.get("is_articulation_point") else ""
+            with st.expander(f"#{i} {n.get('name')}{ap_tag} — SRS {srs:.3f}"):
+                st.markdown(_explain_node(n))
 
     st.markdown("---")
     st.markdown("**AP** = Articulation Point (removal disconnects supply graph)")
