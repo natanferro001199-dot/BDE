@@ -14,7 +14,7 @@ app.conf.update(
     task_reject_on_worker_lost=True,
 )
 
-app.autodiscover_tasks(["ingestion", "processing", "resolution", "analysis", "hypotheses", "contrarian", "integration", "alerts"])
+app.autodiscover_tasks(["ingestion", "processing", "resolution", "analysis", "hypotheses", "contrarian", "integration", "alerts", "commodities"])
 
 app.conf.beat_schedule = {
     # Phase 2 — Ingestion (Tier 1-2 sources only; Tier 3-4 handled by news-sentiment)
@@ -103,5 +103,10 @@ app.conf.beat_schedule = {
     "alerts-check-ach-needed-4h": {
         "task": "alerts.celery_tasks.check_ach_needed",
         "schedule": crontab(minute=45, hour="*/4"),
+    },
+    # Commodity shortage intelligence (daily at 06:30 UTC, after EDGAR/arXiv ingest)
+    "commodity-daily-analysis-0630": {
+        "task": "commodities.celery_tasks.run_daily_analysis",
+        "schedule": crontab(minute=30, hour=6),
     },
 }

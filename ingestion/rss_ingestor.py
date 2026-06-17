@@ -36,14 +36,36 @@ FEEDS = [
     {"name": "ap_technology",    "url": "https://apnews.com/apf-technology",                              "tier": 3},
     {"name": "washpost_tech",    "url": "https://feeds.washingtonpost.com/rss/business/technology",       "tier": 3},
     {"name": "wsj_markets",      "url": "https://feeds.a.dowjones.com/rss/RSSMarketsMain.xml",            "tier": 3},
+    # Tier 2 — Commodity / mining specialist press
+    {"name": "mining_com",          "url": "https://www.mining.com/feed/",                                  "tier": 2},
+    {"name": "reuters_commodities", "url": "https://feeds.reuters.com/reuters/commoditiesNews",              "tier": 2},
 ]
 
 KEYWORDS = [
+    # Semiconductor / AI hardware (original)
     "semiconductor", "chip", "fab", "foundry", "TSMC", "ASML", "NVIDIA", "AMD", "Intel",
     "HBM", "memory", "packaging", "CoWoS", "EUV", "lithography", "supply chain",
     "shortage", "capacity", "wafer", "AI hardware", "GPU", "accelerator",
     "bottleneck", "geopolit", "export control", "CHIPS Act", "Samsung", "SK Hynix",
     "power semiconductor", "SiC", "GaN", "substrate", "ABF",
+    # Critical minerals & rare earths
+    "gallium", "germanium", "antimony", "indium", "rhenium", "hafnium", "tungsten",
+    "rare earth", "dysprosium", "terbium", "neodymium", "NdPr", "NdFeB", "scandium",
+    # Battery materials
+    "cobalt", "lithium", "graphite anode", "natural graphite", "manganese sulphate",
+    "nickel sulphate", "battery grade", "LFP", "NMC", "LMFP",
+    # Semiconductor materials
+    "high purity quartz", "Spruce Pine", "silicon metal", "polysilicon",
+    "neon gas", "hydrofluoric acid", "palladium", "fluorspar",
+    # Base metals & energy
+    "copper", "zinc concentrate", "alumina", "bauxite",
+    "uranium", "LNG", "metallurgical coal", "coking coal", "helium",
+    # Fertilizers
+    "potash", "phosphate", "urea", "sulphur", "sulfur",
+    # Food commodities
+    "cocoa", "robusta coffee",
+    # Generic commodity terms
+    "critical mineral", "mining", "concentrate", "smelter", "refinery", "inventory",
 ]
 
 

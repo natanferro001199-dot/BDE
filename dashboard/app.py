@@ -39,7 +39,8 @@ st.set_page_config(
 
 PAGES = [
     "Overview", "Hypothesis Detail", "Knowledge Graph",
-    "Orphan Queue", "System Status", "Geo Risk Map", "Scenario Simulator",
+    "Orphan Queue", "System Status", "Geo Risk Map",
+    "Scenario Simulator", "Commodity Intelligence",
 ]
 page = st.sidebar.selectbox("Navigate", PAGES)
 st.sidebar.markdown("---")
@@ -225,6 +226,24 @@ def get_risk_trend():
         running += c
         cumulative.append(running)
     return {"dates": dates, "new_daily": new_daily, "cumulative": cumulative}
+
+
+@st.cache_data(ttl=300)
+def get_commodity_ranking() -> list[dict]:
+    try:
+        from commodities.store import CommodityStore
+        return CommodityStore().get_latest_ranking()
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=300)
+def get_commodity_history(commodity_name: str) -> list[dict]:
+    try:
+        from commodities.store import CommodityStore
+        return CommodityStore().get_commodity_history(commodity_name, days=30)
+    except Exception:
+        return []
 
 
 # ──────────────────────────────────────────────
@@ -1182,3 +1201,220 @@ elif page == "Scenario Simulator":
                             } for r in comparison],
                             use_container_width=True, hide_index=True,
                         )
+
+
+# ──────────────────────────────────────────────
+# PAGE 8: Commodity Intelligence
+# ──────────────────────────────────────────────
+
+elif page == "Commodity Intelligence":
+    st.title("Commodity Shortage Intelligence")
+    st.markdown(
+        "Daily 5-agent AI debate across 35 strategic commodities. "
+        "Supply Stress Score 0–100 based on supply growth, demand, inventory, "
+        "geographic concentration, geopolitical risk, and production lead times."
+    )
+
+    def _stress_badge(score) -> str:
+        if score is None:
+            return "⚠️ —"
+        s = float(score)
+        if s >= 70:
+            return f"🔴 {s:.1f}"
+        if s >= 40:
+            return f"🟠 {s:.1f}"
+        return f"🟢 {s:.1f}"
+
+    def _delta_str(delta) -> str:
+        if delta is None:
+            return "—"
+        d = float(delta)
+        if abs(d) < 0.05:
+            return "—"
+        return f"{d:+.1f} {'▲' if d > 0 else '▼'}"
+
+    def _outlook_badge(val) -> str:
+        return {"bearish": "🔻 bearish", "bullish": "🔺 bullish", "neutral": "➡️ neutral"}.get(
+            (val or "").lower(), "➡️ neutral"
+        )
+
+    def _stars(n) -> str:
+        try:
+            n = max(1, min(5, int(n)))
+        except (TypeError, ValueError):
+            return "—"
+        return "★" * n + "☆" * (5 - n)
+
+    with st.spinner("Loading commodity rankings…"):
+        ranking = get_commodity_ranking()
+
+    if not ranking:
+        st.info(
+            "No commodity analysis has run yet. "
+            "Click **Run Analysis Now** below to generate the first ranking — "
+            "takes 20-30 minutes for all 35 commodities."
+        )
+    else:
+        latest_date = ranking[0].get("run_date", "")
+        valid = [r for r in ranking if not r.get("parse_error") and r.get("supply_stress_score") is not None]
+        avg_score = sum(float(r["supply_stress_score"]) for r in valid) / max(1, len(valid))
+        top1 = valid[0] if valid else None
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Last Analysis", latest_date or "—")
+        col2.metric("Commodities Scored", f"{len(valid)} / {len(ranking)}")
+        col3.metric("Highest Stress", f"{top1['commodity']} ({top1['supply_stress_score']:.0f})" if top1 else "—")
+        col4.metric("Average Score", f"{avg_score:.1f}")
+
+        st.subheader("Top 20 Commodity Shortage Ranking")
+        top20 = valid[:20]
+        table_rows = []
+        for r in top20:
+            table_rows.append({
+                "#": r.get("rank", ""),
+                "Commodity": r["commodity"],
+                "Sector": r.get("sector", ""),
+                "Score": _stress_badge(r.get("supply_stress_score")),
+                "24h Δ": _delta_str(r.get("score_delta")),
+                "6M": _outlook_badge(r.get("outlook_6m")),
+                "12M": _outlook_badge(r.get("outlook_12m")),
+                "3Y": _outlook_badge(r.get("outlook_3y")),
+                "5Y": _outlook_badge(r.get("outlook_5y")),
+                "Conf": _stars(r.get("confidence")),
+            })
+        st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
+        # ── Drill-down ──────────────────────────────────────────────────────
+        st.markdown("---")
+        st.subheader("Commodity Drill-Down")
+        all_names = [r["commodity"] for r in valid]
+        if all_names:
+            sel = st.selectbox("Select commodity", all_names, key="comm_sel")
+            row = next((r for r in valid if r["commodity"] == sel), None)
+            if row:
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Supply Stress Score", f"{row['supply_stress_score']:.1f} / 100")
+                c2.metric("24h Change", _delta_str(row.get("score_delta")))
+                c3.metric("Confidence", _stars(row.get("confidence")))
+                c4.metric("Consensus", str(row.get("consensus") or "—").title())
+
+                oc1, oc2, oc3, oc4 = st.columns(4)
+                oc1.metric("6-Month Outlook", _outlook_badge(row.get("outlook_6m")))
+                oc2.metric("12-Month Outlook", _outlook_badge(row.get("outlook_12m")))
+                oc3.metric("3-Year Outlook", _outlook_badge(row.get("outlook_3y")))
+                oc4.metric("5-Year Outlook", _outlook_badge(row.get("outlook_5y")))
+
+                # Sub-score breakdown
+                st.subheader("Score Breakdown (9 components)")
+                sub_labels = [
+                    "Supply Growth (15%)",
+                    "Demand Growth (15%)",
+                    "Inventory Depletion (15%)",
+                    "Geographic Concentration (15%)",
+                    "Refining Concentration (10%)",
+                    "Geopolitical Risk (10%)",
+                    "Export Restrictions (10%)",
+                    "Replacement Difficulty (5%)",
+                    "Production Lead Time (5%)",
+                ]
+                sub_keys = [
+                    "supply_growth_score", "demand_growth_score", "inventory_depletion_score",
+                    "geographic_concentration_score", "refining_concentration_score",
+                    "geopolitical_risk_score", "export_restriction_score",
+                    "replacement_difficulty_score", "production_lead_time_score",
+                ]
+                sub_scores = [row.get(k) or 0 for k in sub_keys]
+                bar_colors = ["#e74c3c" if s >= 70 else "#e67e22" if s >= 40 else "#27ae60" for s in sub_scores]
+                fig_sub = go.Figure(go.Bar(
+                    x=sub_scores, y=sub_labels, orientation="h",
+                    marker_color=bar_colors,
+                    hovertemplate="<b>%{y}</b>: %{x}<extra></extra>",
+                ))
+                fig_sub.update_layout(
+                    height=320, margin=dict(l=10, r=10, t=10, b=10),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    xaxis=dict(range=[0, 100], gridcolor="#2a2a2a", color="#aaa"),
+                    yaxis=dict(tickfont=dict(size=11, color="#ddd")),
+                    font=dict(color="#fff"),
+                )
+                st.plotly_chart(fig_sub, use_container_width=True)
+
+                # Agent findings
+                st.subheader("Agent Findings")
+                agent_data = [
+                    ("Supply Analyst", row.get("agent1_finding")),
+                    ("Geopolitical Risk", row.get("agent2_finding")),
+                    ("Mining / Engineering", row.get("agent3_finding")),
+                    ("Demand Analyst", row.get("agent4_finding")),
+                    ("Skeptic / Portfolio Manager", row.get("agent5_critique")),
+                ]
+                for agent_name, finding in agent_data:
+                    with st.expander(agent_name, expanded=False):
+                        st.write(finding or "_No finding recorded._")
+
+                # Catalysts / Risks / Indicators
+                cat_col, risk_col, ind_col = st.columns(3)
+                with cat_col:
+                    st.markdown("**Key Catalysts (worsen shortage)**")
+                    cats = json.loads(row.get("key_catalysts") or "[]")
+                    for c in cats:
+                        st.markdown(f"- {c}")
+                with risk_col:
+                    st.markdown("**Risks to Thesis (reduce shortage)**")
+                    risks = json.loads(row.get("key_risks") or "[]")
+                    for r_ in risks:
+                        st.markdown(f"- {r_}")
+                with ind_col:
+                    st.markdown("**Monitoring Indicators**")
+                    inds = json.loads(row.get("monitoring_indicators") or "[]")
+                    for m in inds:
+                        st.markdown(f"- {m}")
+
+                st.caption(f"Articles used in this analysis: {row.get('articles_used', 0)}")
+
+                # Historical trend (appears after day 2+)
+                history = get_commodity_history(sel)
+                if len(history) > 1:
+                    st.subheader(f"{sel} — Supply Stress Score History")
+                    hist_dates = [h["run_date"] for h in history]
+                    hist_scores = [h["supply_stress_score"] for h in history]
+                    fig_hist = go.Figure(go.Scatter(
+                        x=hist_dates, y=hist_scores,
+                        mode="lines+markers",
+                        line=dict(color="#e74c3c", width=2),
+                        fill="tozeroy",
+                        fillcolor="rgba(231,76,60,0.12)",
+                    ))
+                    fig_hist.update_layout(
+                        height=220, margin=dict(l=10, r=10, t=10, b=20),
+                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                        xaxis=dict(gridcolor="#2a2a2a", color="#aaa"),
+                        yaxis=dict(range=[0, 100], gridcolor="#2a2a2a", color="#aaa", title="Score"),
+                        font=dict(color="#fff"),
+                    )
+                    st.plotly_chart(fig_hist, use_container_width=True)
+
+    # Manual trigger
+    st.markdown("---")
+    st.markdown("**Manual Trigger** — runs all 35 commodities immediately via local Mistral (20-30 min)")
+    if st.button("Run Analysis Now", type="secondary", key="comm_run"):
+        with st.spinner(
+            "Running 5-agent Mistral debate on 35 commodities. "
+            "You can navigate away and come back — results persist to disk."
+        ):
+            try:
+                from commodities.analyst import run_all
+                result = run_all()
+                if result.get("status") == "complete":
+                    st.success(
+                        f"Done: {result['succeeded']}/{result['total']} succeeded "
+                        f"in {result['elapsed_seconds']}s"
+                    )
+                    st.cache_data.clear()
+                    st.rerun()
+                elif result.get("status") == "skipped":
+                    st.info("Analysis already ran today — results above are current.")
+                else:
+                    st.error(f"Unexpected result: {result}")
+            except Exception as e:
+                st.error(f"Analysis failed: {e}")
