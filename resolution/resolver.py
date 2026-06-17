@@ -134,6 +134,23 @@ def _top_k_nodes(query_embedding: list[float], nodes: list[dict], k: int = 5) ->
 
 
 # ──────────────────────────────────────────────
+# Evidence update (called after each MENTIONS edge is created)
+# ──────────────────────────────────────────────
+
+def _update_evidence(doc: dict, node_id: str) -> None:
+    try:
+        from hypotheses.evidence_updater import update_from_document
+        update_from_document(
+            doc_uid=doc["uid"],
+            doc_title=doc.get("title") or "",
+            doc_text=doc.get("text") or "",
+            node_id=node_id,
+        )
+    except Exception as e:
+        logger.debug(f"Evidence update skipped for {doc.get('uid')}: {e}")
+
+
+# ──────────────────────────────────────────────
 # Resolution logic
 # ──────────────────────────────────────────────
 
@@ -166,6 +183,7 @@ def _resolve_document(doc: dict, nodes: list[dict], driver, orphan_q: OrphanQueu
                 create_mention_edge(driver, doc["uid"], c["node_id"], c["label"],
                                     c["similarity"], "vector_auto")
                 mentions_created += 1
+                _update_evidence(doc, c["node_id"])
         return {"uid": doc["uid"], "status": "auto_routed", "mentions": mentions_created,
                 "best": best["node_id"], "score": best_score}
 
@@ -179,6 +197,7 @@ def _resolve_document(doc: dict, nodes: list[dict], driver, orphan_q: OrphanQueu
                 store_document_node(driver, doc)
                 create_mention_edge(driver, doc["uid"], node_id, matched["label"],
                                     result["confidence"], "mistral")
+                _update_evidence(doc, node_id)
                 return {"uid": doc["uid"], "status": "mistral_routed",
                         "mentions": 1, "best": node_id, "score": result["confidence"]}
         # Mistral undecided

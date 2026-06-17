@@ -73,6 +73,11 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=30, hour=2, day_of_week=1),
         "kwargs": {"top_n": 10},
     },
+    # Evidence catch-up (every 2h — reconciles MENTIONS edges not yet in evidence)
+    "evidence-update-every-2h": {
+        "task": "hypotheses.celery_tasks.run_evidence_update",
+        "schedule": crontab(minute=30, hour="*/2"),
+    },
     "check-ias-windows-every-6h": {
         "task": "hypotheses.celery_tasks.check_ias_windows",
         "schedule": crontab(minute=30, hour="*/6"),

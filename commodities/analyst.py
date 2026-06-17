@@ -251,14 +251,15 @@ def analyze_commodity(commodity: dict) -> dict:
     name = commodity["name"]
     article_context, n_articles = _get_article_context(commodity)
 
-    prompt = _PROMPT.format(
-        name=name,
-        sector=commodity.get("sector", ""),
-        unit=commodity.get("unit", ""),
-        description=commodity.get("description", ""),
-        key_producers=commodity.get("key_producers", ""),
-        n_articles=n_articles,
-        article_context=article_context,
+    prompt = (
+        _PROMPT
+        .replace("{name}", name)
+        .replace("{sector}", commodity.get("sector", ""))
+        .replace("{unit}", commodity.get("unit", ""))
+        .replace("{description}", commodity.get("description", ""))
+        .replace("{key_producers}", commodity.get("key_producers", ""))
+        .replace("{n_articles}", str(n_articles))
+        .replace("{article_context}", article_context)
     )
 
     try:
